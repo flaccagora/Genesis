@@ -12,6 +12,7 @@ MPMEntity._add_to_solver → set_muscle_group(mesh_set_group_ids).
 """
 
 import argparse
+import re
 import numpy as np
 import trimesh
 import genesis as gs
@@ -20,6 +21,18 @@ import genesis as gs
 # ---------------------------------------------------------------------------
 # OBJ parsing: returns dict { name -> trimesh.Trimesh }
 # ---------------------------------------------------------------------------
+EXCLUDE_KEYWORDS = [
+    r"label", r"text", r"annotation", r"arrow", r"guide",
+    r"camera", r"light", r"armature",
+    r"\.g$",   # Z-anatomy uses ".g" suffix for label/group empties
+    r"\.j$",
+]
+
+def compile_patterns(keywords):
+    return [re.compile(k, re.IGNORECASE) for k in keywords]
+
+EXCLUDE_RE = compile_patterns(EXCLUDE_KEYWORDS)
+
 
 def parse_obj_submeshes(obj_file: str) -> dict[str, trimesh.Trimesh]:
     with open(obj_file, "r") as f:
@@ -41,6 +54,10 @@ def parse_obj_submeshes(obj_file: str) -> dict[str, trimesh.Trimesh]:
     ranges = {}
     for k, (start, name) in enumerate(obj_markers):
         end = obj_markers[k + 1][0] if k + 1 < len(obj_markers) else len(lines)
+        
+        if any(rex.search(name) for rex in EXCLUDE_RE):
+            continue
+
         ranges[name] = (start, end)
 
     submeshes = {}
@@ -93,6 +110,7 @@ def main():
 
     lobe_items    = [(n, m) for n, m in submeshes.items() if "lobe"   in n.lower()]
     bronchi_items = [(n, m) for n, m in submeshes.items() if "bronch" in n.lower()]
+    everything_else = [(n, m) for n, m in submeshes.items() if "lobe" not in n.lower() and "bronch" not in n.lower()]
 
     if not lobe_items:
         raise RuntimeError("No objects with 'lobe' in name.")
@@ -101,16 +119,17 @@ def main():
 
     print(f"  Lobes   : {[n for n,_ in lobe_items]}")
     print(f"  Bronchi : {[n for n,_ in bronchi_items]}")
+    print(f"  Other   : {[n for n,_ in everything_else]}")
 
     # Put lobes first so group-ids 0..L-1 = lobes, L..L+B-1 = bronchi
-    ordered = lobe_items + bronchi_items
+    ordered = lobe_items + bronchi_items + everything_else
     tmp_mesh_list   = [m for _, m in ordered]
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32")
 
     error_meshes = []
     for i, (name, mesh) in enumerate(ordered):
-        if i >= 20:
-            continue
+        # if i >= 20:
+        #     continue
         print(i, name)
         try:
             mesh_list = [tmp_mesh_list[8], tmp_mesh_list[i]]
